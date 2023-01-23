@@ -2,7 +2,9 @@ import net.aksingh.owmjapis.api.APIException;
 import net.aksingh.owmjapis.core.OWM;
 import net.aksingh.owmjapis.model.CurrentWeather;
 import net.aksingh.owmjapis.model.HourlyWeatherForecast;
+import net.aksingh.owmjapis.model.param.Coord;
 import net.aksingh.owmjapis.model.param.WeatherData;
+import net.iakovlev.timeshape.TimeZoneEngine;
 import org.joda.time.DateTime;
 
 import javax.imageio.ImageIO;
@@ -15,7 +17,13 @@ import java.io.FileNotFoundException;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.net.URL;
+import java.time.Clock;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.Scanner;
+import java.util.TimeZone;
 
 public class Weather extends JFrame {
     static OWM owm;
@@ -30,12 +38,12 @@ public class Weather extends JFrame {
     private JLabel weatherForecastLabel;
     private JComboBox modeSelectionComboBox;
     private JButton settingsButton;
+    private TimeZoneEngine engine = TimeZoneEngine.initialize();
 
     public Weather() {
         super("Weather");
         setContentPane(mainPanel);
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        setVisible(true);
         setSize(600, 110);
         mainPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
         submitButton.setIcon(new ImageIcon(".\\icons\\search.png"));
@@ -44,12 +52,15 @@ public class Weather extends JFrame {
         weatherForecastPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED);
         weatherForecastPane.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
         while (true) {
-            owm = new OWM((String) JOptionPane.showInputDialog(null,
-                    "Enter your openweather api key", "API Key input",
-                    JOptionPane.PLAIN_MESSAGE, null, null, null));
+            try {
+                owm = new OWM((String) JOptionPane.showInputDialog(null,
+                        "Enter your openweather api key", "API Key input",
+                        JOptionPane.PLAIN_MESSAGE, null, null, null));
+            } catch (Exception ignored) {
+                System.exit(0);
+            }
             try {
                 owm.currentWeatherByCityName("London");
-
                 break;
             } catch (APIException e) {
                 JOptionPane.showMessageDialog(null, "Invalid API key", "Error",
@@ -69,6 +80,7 @@ public class Weather extends JFrame {
         } catch (FileNotFoundException ignored) {} catch (APIException e) {
             throw new RuntimeException(e);
         }
+        setVisible(true);
         cityNameInput.addFocusListener(new FocusListener() {
             @Override
             public void focusGained(FocusEvent e) {
@@ -140,7 +152,7 @@ public class Weather extends JFrame {
                                 "<br>" +
                                 "Pressure: " + cwd.getMainData().getPressure() + " hPa" + "<br>" +
                                 "Humidity: " + cwd.getMainData().getHumidity() + " %" + "<br>" +
-                                "Wind speed: " + (int) (cwd.getWindData().getSpeed() * 3.6f) + " km/h" +
+                                "Wind speed: " + (int) (mpsToKmph(cwd.getWindData().getSpeed())) + " km/h" +
                                 "<br>" +
                                 "Wind direction: " + windDegreeToDirection(cwd.getWindData().getDegree()) +
                                 "</html>";
@@ -151,9 +163,12 @@ public class Weather extends JFrame {
                         StringBuilder forecastInfo = new StringBuilder();
                         forecastInfo.append("<html>");
                         assert hwd.getDataList() != null;
+                        assert hwd.getCityData() != null;
                         forecastInfo.append("Selected city: ").append(hwd.getCityData().getName()).append("<br>");
                         for (WeatherData data : hwd.getDataList()) {
                             DateTime dateTime = new DateTime(data.getDateTime());
+                            assert hwd.getCityData().getCoordData() != null;
+                            dateTime = dateTime.plusHours(timeZoneOffset(hwd.getCityData().getCoordData()));
                             forecastInfo.append("[")
                                     .append(dateTime.getDayOfMonth()).append(".")
                                     .append(dateTime.getMonthOfYear()).append(".")
@@ -168,7 +183,7 @@ public class Weather extends JFrame {
                             forecastInfo.append("Humidity: ").append(data.getMainData().getHumidity()).append(" %")
                                     .append("<br>");
                             assert data.getWindData() != null;
-                            forecastInfo.append("Wind speed: ").append((int) (data.getWindData().getSpeed() * 3.6f))
+                            forecastInfo.append("Wind speed: ").append((int) (mpsToKmph(data.getWindData().getSpeed())))
                                     .append(" km/h").append("<br>");
                             forecastInfo.append("Wind direction: ").append(windDegreeToDirection(data.getWindData()
                                     .getDegree())).append("<br>");
@@ -182,20 +197,24 @@ public class Weather extends JFrame {
                         setSize(600, 270);
                         StringBuilder detailedWeatherInfo = new StringBuilder();
                         detailedWeatherInfo.append("<html>");
-                        DateTime dateTime = new DateTime(cwd.getDateTime());
                         detailedWeatherInfo.append("Selected city: ").append(cwd.getCityName()).append("<br>");
-                        detailedWeatherInfo.append("Date: ").append(dateTime.getDayOfMonth()).append(".")
-                                .append(dateTime.getMonthOfYear()).append(".")
-                                .append(dateTime.getYear()).append(" ")
-                                .append("<br>");
+                        DateTime currentDateTime = new DateTime(cwd.getDateTime());
+                        assert cwd.getCoordData() != null;
+                        currentDateTime = currentDateTime.plusHours(timeZoneOffset(cwd.getCoordData()));
                         assert cwd.getMainData() != null;
-                        detailedWeatherInfo.append("Max temperature: ")
+                        detailedWeatherInfo.append("[")
+                                .append(currentDateTime.getDayOfMonth()).append(".")
+                                .append(currentDateTime.getMonthOfYear()).append(".")
+                                .append(currentDateTime.getYear()).append(" ")
+                                .append(currentDateTime.getHourOfDay()).append(":00] ")
+                                .append("<br>")
+                                .append("Max temperature: ")
                                 .append(kelvinToCelsius(cwd.getMainData().getTempMax())).append("°C")
-                                .append("<br/>");
-                        detailedWeatherInfo.append("Min temperature: ")
+                                .append("<br/>")
+                                .append("Min temperature: ")
                                 .append(kelvinToCelsius(cwd.getMainData().getTempMin())).append("°C")
-                                .append("<br/>");
-                        detailedWeatherInfo.append("Rainfall amount: ");
+                                .append("<br/>")
+                                .append("Rainfall amount: ");
                         if (cwd.getRainData() != null) {
                             detailedWeatherInfo.append(cwd.getRainData().getPrecipVol3h()).append("mm");
                         } else {
@@ -203,14 +222,51 @@ public class Weather extends JFrame {
                         }
                         detailedWeatherInfo.append("<br/>");
                         detailedWeatherInfo.append("Wind speed: ");
-                        if (cwd.getWindData() != null) {
-                            detailedWeatherInfo.append((int) (cwd.getWindData().getSpeed() * 3.6f)).append(" km/h");
+                        assert cwd.getWindData() != null;
+                        detailedWeatherInfo.append((int) (mpsToKmph(cwd.getWindData().getSpeed()))).append(" km/h");
+                        detailedWeatherInfo.append("<br/>");
+                        detailedWeatherInfo.append("Wind direction: ");
+                        Double windDeg = cwd.getWindData().getDegree();
+                        detailedWeatherInfo.append(windDegreeToDirection(windDeg));
+                        detailedWeatherInfo.append("<br/>");
+                        assert hwd.getDataList() != null;
+                        DateTime forecastDateTime;
+                        for (WeatherData data : hwd.getDataList()) {
+                            forecastDateTime = new DateTime(data.getDateTime());
+                            assert Objects.requireNonNull(hwd.getCityData()).getCoordData() != null;
+                            forecastDateTime = forecastDateTime.plusHours(timeZoneOffset(hwd.getCityData().getCoordData()));
+                            if (!forecastDateTime.dayOfMonth().equals(currentDateTime.dayOfMonth())) {
+                                break;
+                            }
+                            assert data.getTempData() != null;
+                            assert data.getMainData() != null;
+                            detailedWeatherInfo.append("<br/>")
+                                    .append("[")
+                                    .append(forecastDateTime.getDayOfMonth()).append(".")
+                                    .append(forecastDateTime.getMonthOfYear()).append(".")
+                                    .append(forecastDateTime.getYear()).append(" ")
+                                    .append(forecastDateTime.getHourOfDay()).append(":00] ")
+                                    .append("<br>")
+                                    .append("Max temperature: ")
+                                    .append(kelvinToCelsius(data.getMainData().getTempMax())).append("°C")
+                                    .append("<br/>")
+                                    .append("Min temperature: ")
+                                    .append(kelvinToCelsius(data.getMainData().getTempMin())).append("°C")
+                                    .append("<br/>")
+                                    .append("Rainfall amount: ");
+                            if (cwd.getRainData() != null) {
+                                detailedWeatherInfo.append(cwd.getRainData().getPrecipVol3h()).append("mm");
+                            } else {
+                                detailedWeatherInfo.append("0mm");
+                            }
                             detailedWeatherInfo.append("<br/>");
-                            detailedWeatherInfo.append("Wind direction: ");
-                            Double windDeg = cwd.getWindData().getDegree();
-                            detailedWeatherInfo.append(windDegreeToDirection(windDeg));
-                        } else {
-                            detailedWeatherInfo.append("No data");
+                            assert data.getWindData() != null;
+                            detailedWeatherInfo.append("Wind speed: ")
+                                    .append((int) (mpsToKmph(data.getWindData().getSpeed()))).append(" km/h")
+                                    .append("<br/>")
+                                    .append("Wind direction: ");
+                            windDeg = data.getWindData().getDegree();
+                            detailedWeatherInfo.append(windDegreeToDirection(windDeg)).append("<br/>");
                         }
                         detailedWeatherInfo.append("</html>");
                         weatherForecastLabel.setIcon(null);
@@ -223,6 +279,20 @@ public class Weather extends JFrame {
 
     Double kelvinToCelsius(Double kelvin) {
         return (double) Math.round(kelvin - 273.15);
+    }
+
+    double mpsToKmph(Double mps) {
+        return (double) Math.round(mps * 3.6);
+    }
+
+    int timeZoneOffset(Coord coord) {
+        Optional<ZoneId> zoneId = engine.query(coord.getLatitude(), coord.getLongitude());
+        return zoneId.get().getRules().getOffset(LocalDateTime.now(Clock.systemUTC())).getTotalSeconds() / 3600
+                - defaultTimeZoneOffset();
+    }
+
+    int defaultTimeZoneOffset() {
+        return TimeZone.getDefault().getDSTSavings() / 3600000;
     }
 
     String windDegreeToDirection(Double windDeg) {
